@@ -1,0 +1,13 @@
+{
+  "name": "aurastyle-app",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@google/genai": "^0.1.1",
+    "cloudinary": "^2.0.0",
+    "uuid": "^9.0.1"
+  }
+}

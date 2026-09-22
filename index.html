@@ -1,1 +1,286 @@
 
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AuraStyle — Tu Vestimenta Perfecta</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- PayPal SDK (Reemplaza YOUR_PAYPAL_CLIENT_ID) -->
+  <script src="https://www.paypal.com/sdk/js?client-id=YOUR_PAYPAL_CLIENT_ID&currency=USD"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            serif: ['"Cormorant Garamond"', 'serif'],
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+          },
+          colors: {
+            aura: {
+              cream: '#FAF7F2',
+              rose: '#F3E8E2',
+              blush: '#E8C5B8',
+              terracotta: '#C87D65',
+              dark: '#2B2421',
+              accent: '#B5735D'
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-aura-cream text-aura-dark font-sans min-h-screen flex flex-col justify-between antialiased selection:bg-aura-blush selection:text-aura-dark">
+
+  <!-- Header -->
+  <header class="py-6 px-6 sm:px-12 flex justify-between items-center border-b border-aura-rose/60 bg-white/60 backdrop-blur-md sticky top-0 z-50">
+    <div class="flex items-center gap-2">
+      <span class="text-2xl font-serif font-semibold tracking-tight text-aura-dark">Aura<span class="text-aura-terracotta italic font-normal">Style</span></span>
+    </div>
+    <span class="text-xs uppercase tracking-widest font-semibold px-3 py-1 rounded-full bg-aura-rose text-aura-accent border border-aura-blush/40">AI Fashion Stylist</span>
+  </header>
+
+  <!-- Hero & Main -->
+  <main class="max-w-xl mx-auto w-full px-5 py-8 sm:py-12 flex-1 flex flex-col items-center justify-center">
+
+    <!-- Step 1: Upload View -->
+    <section id="uploadSection" class="w-full text-center space-y-6">
+      <div class="space-y-2">
+        <h1 class="text-4xl sm:text-5xl font-serif font-semibold text-aura-dark tracking-tight leading-tight">
+          Descubre el look hecho <span class="italic text-aura-terracotta font-normal">exactamente</span> para ti
+        </h1>
+        <p class="text-aura-dark/70 text-sm sm:text-base max-w-md mx-auto">
+          Sube tu foto de cuerpo entero o medio cuerpo. Nuestra IA analiza tu paleta, silueta y presencia para diseñar tu outfit perfecto.
+        </p>
+      </div>
+
+      <!-- Dropzone -->
+      <div id="dropzone" class="relative group cursor-pointer border-2 border-dashed border-aura-blush hover:border-aura-terracotta bg-white/70 rounded-3xl p-8 sm:p-10 transition-all duration-300 shadow-sm hover:shadow-md">
+        <input type="file" id="fileInput" accept="image/png, image/jpeg, image/webp" class="hidden">
+        <div class="flex flex-col items-center gap-4">
+          <div class="w-16 h-16 rounded-2xl bg-aura-rose flex items-center justify-center text-aura-terracotta group-hover:scale-105 transition-transform">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+          </div>
+          <div>
+            <p class="font-medium text-aura-dark">Toca para elegir tu foto</p>
+            <p class="text-xs text-aura-dark/50 mt-1">PNG, JPG o WebP (cuerpo entero o plano medio)</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 2: Loader View -->
+    <section id="loadingSection" class="hidden w-full text-center space-y-6 py-12">
+      <div class="relative w-20 h-20 mx-auto">
+        <div class="absolute inset-0 rounded-full border-4 border-aura-rose animate-ping opacity-75"></div>
+        <div class="relative w-20 h-20 rounded-full border-4 border-t-aura-terracotta border-aura-rose animate-spin"></div>
+      </div>
+      <div class="space-y-2">
+        <h3 class="text-2xl font-serif text-aura-dark font-medium" id="loaderText">Analizando tus tonalidades...</h3>
+        <p class="text-xs text-aura-dark/60 tracking-wide uppercase">Generando una propuesta de alta costura</p>
+      </div>
+    </section>
+
+    <!-- Step 3: Blurred Preview & Checkout View -->
+    <section id="previewSection" class="hidden w-full flex flex-col items-center space-y-6">
+      <div class="text-center space-y-1">
+        <span class="text-xs uppercase tracking-widest text-aura-accent font-semibold">Propuesta Lista</span>
+        <h2 class="text-3xl font-serif font-semibold text-aura-dark">Tu Estilismo Personalizado</h2>
+        <p class="text-xs text-aura-dark/60" id="styleSummaryText">Elegante, equilibrado y ajustado a tu silueta.</p>
+      </div>
+
+      <!-- Blurred Image Container -->
+      <div class="relative w-full max-w-sm aspect-[3/4] rounded-3xl overflow-hidden shadow-xl border border-white bg-white">
+        <img id="previewImg" src="" alt="Look Preview" class="w-full h-full object-cover select-none pointer-events-none">
+        <!-- Overlay Badges -->
+        <div class="absolute inset-0 bg-gradient-to-t from-aura-dark/70 via-transparent to-transparent flex flex-col justify-end p-6 text-white text-center">
+          <div class="inline-flex items-center gap-2 self-center bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-xs font-medium mb-2">
+            <svg class="w-4 h-4 text-amber-200" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/>
+            </svg>
+            Vista Previa Protegida
+          </div>
+          <p class="text-sm font-light text-white/90">Desbloquea en resolución completa con paleta de color y guía de prendas.</p>
+        </div>
+      </div>
+
+      <!-- Payment Box -->
+      <div class="w-full max-w-sm bg-white p-6 rounded-3xl border border-aura-rose shadow-sm space-y-4">
+        <div class="flex justify-between items-center pb-3 border-b border-aura-rose/70">
+          <div>
+            <p class="font-semibold text-aura-dark text-sm">Look Completo HD + Tips</p>
+            <p class="text-xs text-aura-dark/50">Acceso inmediato y descarga</p>
+          </div>
+          <div class="text-right">
+            <span class="text-xs text-aura-dark/40 line-through mr-1">$7.99</span>
+            <span class="text-xl font-bold text-aura-terracotta">$1.99</span>
+          </div>
+        </div>
+
+        <div id="paypal-button-container" class="w-full"></div>
+      </div>
+    </section>
+
+    <!-- Step 4: Unlocked Full Look View -->
+    <section id="unlockedSection" class="hidden w-full flex flex-col items-center space-y-6">
+      <div class="text-center space-y-1">
+        <span class="text-xs uppercase tracking-widest text-emerald-600 font-semibold">¡Pago Exitoso!</span>
+        <h2 class="text-3xl font-serif font-semibold text-aura-dark">Tu Outfit Revelado</h2>
+        <p class="text-xs text-aura-dark/60">Guarda la imagen o llévala a tu tienda de ropa favorita.</p>
+      </div>
+
+      <div class="relative w-full max-w-sm aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl border-2 border-aura-blush">
+        <img id="unlockedImg" src="" alt="Look Desbloqueado" class="w-full h-full object-cover">
+      </div>
+
+      <div id="stylistNotes" class="w-full max-w-sm bg-white p-5 rounded-2xl border border-aura-rose text-xs text-aura-dark/80 leading-relaxed">
+      </div>
+
+      <a id="downloadBtn" href="#" download="mi-outfit-perfecto.jpg" class="w-full max-w-sm py-3.5 px-6 rounded-2xl bg-aura-dark text-white font-medium text-center hover:bg-aura-terracotta transition-colors shadow-md">
+        Descargar Imagen en HD
+      </a>
+    </section>
+
+  </main>
+
+  <footer class="py-6 text-center text-xs text-aura-dark/40 border-t border-aura-rose/40">
+    © 2026 AuraStyle. Inspirado en tu esencia. Las fotos temporales se depuran cada 24 horas.
+  </footer>
+
+  <script>
+    let currentSessionId = null;
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const uploadSection = document.getElementById('uploadSection');
+    const loadingSection = document.getElementById('loadingSection');
+    const previewSection = document.getElementById('previewSection');
+    const unlockedSection = document.getElementById('unlockedSection');
+    const previewImg = document.getElementById('previewImg');
+    const unlockedImg = document.getElementById('unlockedImg');
+    const stylistNotes = document.getElementById('stylistNotes');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      uploadSection.classList.add('hidden');
+      loadingSection.classList.remove('hidden');
+
+      // Animación de textos del loader
+      const messages = [
+        "Analizando proporciones y tono de piel...",
+        "Consultando catálogo de tendencias...",
+        "Creando el corte y la combinación perfecta...",
+        "Aplicando últimos retoques..."
+      ];
+      let msgIndex = 0;
+      const interval = setInterval(() => {
+        msgIndex = (msgIndex + 1) % messages.length;
+        document.getElementById('loaderText').textContent = messages[msgIndex];
+      }, 2500);
+
+      try {
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64Image = reader.result;
+
+          // Llamada a Netlify Function
+          const res = await fetch('/.netlify/functions/generate-outfit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64: base64Image })
+          });
+
+          clearInterval(interval);
+          const data = await res.json();
+
+          if (!res.ok) throw new Error(data.error || 'Error al procesar la imagen');
+
+          currentSessionId = data.sessionId;
+          previewImg.src = data.blurredImageUrl;
+          document.getElementById('styleSummaryText').textContent = data.styleSnippet || "Diseño adaptado para realzar tu estilo natural.";
+
+          loadingSection.classList.add('hidden');
+          previewSection.classList.remove('hidden');
+
+          initPayPal(data.sessionId);
+        };
+        reader.readAsDataURL(file);
+      } catch (err) {
+        clearInterval(interval);
+        alert(err.message);
+        loadingSection.classList.add('hidden');
+        uploadSection.classList.remove('hidden');
+      }
+    });
+
+    function initPayPal(sessionId) {
+      if (document.getElementById('paypal-button-container').children.length > 0) {
+        document.getElementById('paypal-button-container').innerHTML = '';
+      }
+
+      paypal.Buttons({
+        style: {
+          layout: 'vertical',
+          color:  'gold',
+          shape:  'rect',
+          label:  'pay',
+          height: 44
+        },
+        createOrder: (data, actions) => {
+          return actions.order.create({
+            purchase_units: [{
+              description: "AuraStyle - Look y Vestimenta Personalizada HD",
+              amount: { value: '1.99' },
+              custom_id: sessionId
+            }]
+          });
+        },
+        onApprove: async (data, actions) => {
+          const capture = await actions.order.capture();
+          
+          // Verificar en backend
+          const verifyRes = await fetch('/.netlify/functions/verify-paypal', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: data.orderID,
+              sessionId: sessionId
+            })
+          });
+
+          const unlockData = await verifyRes.json();
+          if (unlockData.success) {
+            previewSection.classList.add('hidden');
+            unlockedSection.classList.remove('hidden');
+
+            unlockedImg.src = unlockData.hdImageUrl;
+            downloadBtn.href = unlockData.hdImageUrl;
+            stylistNotes.innerHTML = `
+              <p class="font-semibold text-aura-terracotta mb-1">Notas del Estilista:</p>
+              <p>${unlockData.stylistRecommendation}</p>
+            `;
+          } else {
+            alert("No pudimos verificar el pago. Si te cobraron, contáctanos con tu OrderID: " + data.orderID);
+          }
+        },
+        onError: (err) => {
+          console.error(err);
+          alert("Ocurrió un error con el pago de PayPal.");
+        }
+      }).render('#paypal-button-container');
+    }
+  </script>
+</body>
+</html>

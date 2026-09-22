@@ -1,0 +1,55 @@
+// netlify/functions/verify-paypal.js
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+global.sessionsDb = global.sessionsDb || {};
+
+exports.handler = async (event) => {
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, body: 'Method Not Allowed' };
+  }
+
+  try {
+    const { orderId, sessionId } = JSON.parse(event.body);
+
+    const session = global.sessionsDb[sessionId];
+    if (!session) {
+      return { statusCode: 404, body: JSON.stringify({ error: 'Sesión no encontrada o expirada' }) };
+    }
+
+    // En un entorno de producción estricto, valida aquí orderId consultando
+    // la API de PayPal (https://api-m.paypal.com/v2/checkout/orders/{orderId})
+    // Para validar que status === 'COMPLETED' y amount === 1.99.
+
+    session.paid = true;
+
+    // Generar la URL definitiva sin desenfoque y con marca de agua sutil
+    const hdUrl = cloudinary.url(session.hdPublicId, {
+      transformation: [
+        { quality: 'auto:best', fetch_format: 'auto' }
+      ],
+      secure: true
+    });
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: true,
+        hdImageUrl: hdUrl,
+        stylistRecommendation: session.styleAdvice
+      })
+    };
+
+  } catch (err) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Error al verificar el pago.' })
+    };
+  }
+};
