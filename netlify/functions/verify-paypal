@@ -10,35 +10,48 @@ cloudinary.config({
 global.sessionsDb = global.sessionsDb || {};
 
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
-  }
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
   try {
     const { orderId, sessionId } = JSON.parse(event.body);
-
     const session = global.sessionsDb[sessionId];
-    if (!session) {
-      return { statusCode: 404, body: JSON.stringify({ error: 'Sesión no encontrada o expirada' }) };
+
+    if (!session) return { statusCode: 404, body: JSON.stringify({ error: 'Sesión no encontrada' }) };
+
+    // 1. Autenticarse con PayPal para obtener un Access Token
+    // IMPORTANTE: Usa 'api-m.paypal.com' para producción y 'api-m.sandbox.paypal.com' para pruebas
+    const paypalAuth = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_SECRET}`).toString('base64');
+    
+    const tokenReq = await fetch('https://api-m.paypal.com/v1/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${paypalAuth}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: 'grant_type=client_credentials'
+    });
+    const { access_token } = await tokenReq.json();
+
+    // 2. Consultar el estado real de la orden usando el Token
+    const orderReq = await fetch(`https://api-m.paypal.com/v2/checkout/orders/${orderId}`, {
+      headers: { 'Authorization': `Bearer ${access_token}` }
+    });
+    const orderData = await orderReq.json();
+
+    // 3. Validar que la orden esté pagada (COMPLETED)
+    if (orderData.status !== 'COMPLETED') {
+      return { statusCode: 400, body: JSON.stringify({ success: false, error: 'El pago no se ha completado.' }) };
     }
 
-    // En un entorno de producción estricto, valida aquí orderId consultando
-    // la API de PayPal (https://api-m.paypal.com/v2/checkout/orders/{orderId})
-    // Para validar que status === 'COMPLETED' y amount === 1.99.
-
+    // 4. Entregar el Outfit (Pago validado)
     session.paid = true;
-
-    // Generar la URL definitiva sin desenfoque y con marca de agua sutil
     const hdUrl = cloudinary.url(session.hdPublicId, {
-      transformation: [
-        { quality: 'auto:best', fetch_format: 'auto' }
-      ],
+      transformation: [{ quality: 'auto:best', fetch_format: 'auto' }],
       secure: true
     });
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         success: true,
         hdImageUrl: hdUrl,
@@ -47,9 +60,7 @@ exports.handler = async (event) => {
     };
 
   } catch (err) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Error al verificar el pago.' })
-    };
+    console.error(err);
+    return { statusCode: 500, body: JSON.stringify({ error: 'Error interno al verificar.' }) };
   }
 };

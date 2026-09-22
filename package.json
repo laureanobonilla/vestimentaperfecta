@@ -6,7 +6,7 @@
     "dev": "netlify dev"
   },
   "dependencies": {
-    "@google/genai": "^0.1.1",
+    "@google/genai": "latest",
     "cloudinary": "^2.0.0",
     "uuid": "^9.0.1"
   }
