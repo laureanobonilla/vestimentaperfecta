@@ -72,7 +72,7 @@ exports.handler = async (event) => {
     });
     console.log(`[STEP 1 OK] Original almacenado con public_id: ${originalUpload.public_id} (+${Date.now() - t0}ms)`);
 
-    // --- PASO 2: Análisis con Gemini ---
+// --- PASO 2: Análisis con Gemini ---
     console.log('[STEP 2] Enviando imagen a Gemini para diseño del look...');
     let styleVibe = "Look Haute Couture Personalizado";
     let stylistAdvice = "Corte estructurado y balance de color ideal para realzar tu complexión.";
@@ -80,7 +80,7 @@ exports.handler = async (event) => {
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.6-flash',
         contents: [
           {
             role: 'user',
