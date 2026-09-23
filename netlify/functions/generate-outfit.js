@@ -13,45 +13,32 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 global.sessionsDb = global.sessionsDb || {};
 
 exports.handler = async (event) => {
-  console.log('[DEBUG START] ===== INICIO DE PETICIÓN GENERATE-OUTFIT =====');
-  
   if (event.httpMethod !== 'POST') {
-    console.log('[DEBUG ERROR] Método HTTP no permitido:', event.httpMethod);
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   }
 
   try {
-    const rawBody = event.body || '{}';
-    console.log('[DEBUG INFO] Longitud del body recibido:', rawBody.length);
-    
-    const parsedBody = JSON.parse(rawBody);
-    const { imageBase64 } = parsedBody;
-
+    const { imageBase64 } = JSON.parse(event.body || '{}');
     if (!imageBase64) {
-      console.log('[DEBUG ERROR] imageBase64 viene vacío o ausente.');
       return { statusCode: 400, body: JSON.stringify({ error: 'No se envió ninguna imagen.' }) };
     }
 
     const sessionId = uuidv4();
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    console.log(`[DEBUG INFO] ID de sesión asignado: ${sessionId}. Tamaño de imagen limpio: ${cleanBase64.length} caracteres.`);
 
-    // --- PASO 1: Subir original a Cloudinary ---
-    console.log('[DEBUG STEP 1] Intentando subir foto original a Cloudinary...');
-    const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
+    // 1. Guardar la original para tus registros
+    await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
       public_id: `${sessionId}_original`
     });
-    console.log('[DEBUG STEP 1 SUCCESS] Original subido. URL pública:', originalUpload.secure_url);
 
-    // --- PASO 2: Análisis exhaustivo con Gemini ---
-    console.log('[DEBUG STEP 2] Preparando llamada a Gemini 2.0 Flash...');
-    let styleVibe = "Alta Costura Personalizada";
-    let stylistAdvice = "Un diseño impecable que realza tu silueta y elegancia natural.";
+    // 2. Gemini diseña el concepto de moda exacto
+    let styleVibe = "Minimalismo de Lujo en Tonos Neutros";
+    let stylistAdvice = "Un conjunto sofisticado con bléiser estructurado y pantalones de corte sastre que realza tu presencia ejecutiva.";
+    let fashionPrompt = "High-end fashion editorial photography of a gorgeous professional model wearing a luxury designer haute couture outfit, clean studio background, Vogue magazine style, 8k resolution";
 
     try {
-      console.log('[DEBUG STEP 2.1] Ejecutando ai.models.generateContent...');
-      const geminiResponse = await ai.models.generateContent({
+      const geminiAnalysis = await ai.models.generateContent({
         model: 'gemini-2.0-flash',
         contents: [
           {
@@ -59,11 +46,12 @@ exports.handler = async (event) => {
             parts: [
               { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
               {
-                text: `Actúa como directora de estilismo de alta moda. Analiza a la persona en esta foto.
-Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
+                text: `Analiza la estructura corporal y presencia en esta foto. 
+Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
 {
-  "styleVibe": "Título corto y elegante del outfit recomendado",
-  "stylistAdvice": "Consejo personalizado de 3 oraciones explicando el concepto de moda y por qué la favorece."
+  "styleVibe": "Título sofisticado del outfit perfecto para ella",
+  "stylistAdvice": "Consejo de 2 oraciones explicando por qué este diseño la favorece.",
+  "fashionPrompt": "Detailed english description of a professional fashion model wearing a stunning custom luxury designer outfit tailored for her silhouette, high-end studio lighting, editorial vogue aesthetic, 8k"
 }`
               }
             ]
@@ -72,60 +60,47 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
         config: { responseMimeType: 'application/json' }
       });
 
-      console.log('[DEBUG STEP 2.2 SUCCESS] Respuesta cruda de Gemini recibida:', geminiResponse.text);
-      
-      const parsed = JSON.parse(geminiResponse.text);
-      console.log('[DEBUG STEP 2.3 JSON PARSED] Objeto parseado con éxito:', parsed);
-
+      const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
-      
-    } catch (geminiErr) {
-      console.error('[DEBUG STEP 2 ERROR CRITICAL] Falló la llamada o el parseo de Gemini:', geminiErr);
-      console.error('[DEBUG STEP 2 ERROR STACK]:', geminiErr.stack);
-      // Dejamos los valores por defecto para que no se muera la app, pero queda registrado en Netlify Logs
+      if (parsed.fashionPrompt) fashionPrompt = parsed.fashionPrompt;
+    } catch (gErr) {
+      console.warn("Aviso en Gemini:", gErr.message);
     }
 
-    // --- PASO 3: Procesamiento visual en Cloudinary ---
-    console.log('[DEBUG STEP 3] Aplicando transformaciones de estudio en Cloudinary...');
-    const editorialUrl = cloudinary.url(originalUpload.public_id, {
-      transformation: [
-        { width: 800, height: 1066, crop: 'fill', gravity: 'face' },
-        { effect: 'improve', quality: 'auto:best' },
-        { effect: 'contrast:15', vibrance: 15 }
-      ],
-      secure: true
-    });
-    console.log('[DEBUG STEP 3.1] URL editorial generada:', editorialUrl);
+    // 3. Generar la imagen real del outfit mediante motor gráfico de alta calidad
+    const encodedPrompt = encodeURIComponent(fashionPrompt + ", high quality fashion photography, 8k, photorealistic");
+    const aiImageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=1024&nologo=true&seed=${Math.floor(Math.random() * 999999)}`;
 
-    const editorialUpload = await cloudinary.uploader.upload(editorialUrl, {
+    // Descargar la imagen generada por IA y subirla a tu Cloudinary
+    const imgFetch = await fetch(aiImageUrl);
+    const imgBuffer = await imgFetch.arrayBuffer();
+    const outfitBase64 = Buffer.from(imgBuffer).toString('base64');
+
+    const genUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${outfitBase64}`, {
       folder: 'aura_outfits/creations',
-      public_id: `${sessionId}_editorial`
+      public_id: `${sessionId}_generated`
     });
-    console.log('[DEBUG STEP 3 SUCCESS] Versión editorial subida con ID:', editorialUpload.public_id);
 
-    // --- PASO 4: Generación de blur ---
-    console.log('[DEBUG STEP 4] Generando vista previa con desenfoque destructivo...');
-    const blurredImageUrl = cloudinary.url(editorialUpload.public_id, {
+    // 4. Crear la vista previa con desenfoque de servidor destructivo (blur:800)
+    const blurredImageUrl = cloudinary.url(genUpload.public_id, {
       transformation: [
-        { effect: 'blur:900', quality: 'auto:eco' }
+        { width: 600, height: 800, crop: 'fill' },
+        { effect: 'blur:800', quality: 'auto:eco' }
       ],
       secure: true
     });
-    console.log('[DEBUG STEP 4 SUCCESS] URL blurred generada:', blurredImageUrl);
 
-    // --- PASO 5: Guardar sesión ---
+    // 5. Guardar sesión para el cobro en PayPal
     global.sessionsDb[sessionId] = {
       sessionId,
-      publicId: editorialUpload.public_id,
+      publicId: genUpload.public_id,
       styleVibe,
       stylistAdvice,
       paid: false,
       createdAt: new Date().toISOString()
     };
-    console.log('[DEBUG STEP 5 SUCCESS] Sesión guardada en memoria temporal.');
 
-    console.log('[DEBUG END] ===== PETICIÓN COMPLETADA CON ÉXITO =====');
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -137,12 +112,11 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
     };
 
   } catch (error) {
-    console.error('[DEBUG FATAL EXCEPTION EN HANDLER]:', error);
-    console.error('[DEBUG FATAL STACK]:', error.stack);
+    console.error(error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: error.message || 'Error interno crítico del servidor.' })
+      body: JSON.stringify({ error: error.message || 'Error al procesar el look.' })
     };
   }
 };
