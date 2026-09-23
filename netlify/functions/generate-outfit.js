@@ -3,18 +3,6 @@ const { GoogleGenAI } = require('@google/genai');
 const cloudinary = require('cloudinary').v2;
 const { v4: uuidv4 } = require('uuid');
 
-// 1. Verificación de variables de entorno críticas
-const requiredEnv = [
-  'GEMINI_API_KEY',
-  'CLOUDINARY_CLOUD_NAME',
-  'CLOUDINARY_API_KEY',
-  'CLOUDINARY_API_SECRET'
-];
-const missingEnv = requiredEnv.filter((key) => !process.env[key]);
-if (missingEnv.length > 0) {
-  console.error(`[CONFIG ERROR] Variables faltantes en Netlify: ${missingEnv.join(', ')}`);
-}
-
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -36,58 +24,45 @@ exports.handler = async (event) => {
     };
   }
 
-  if (missingEnv.length > 0) {
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: `Faltan variables en Netlify: ${missingEnv.join(', ')}`,
-        step: 'ENV_VERIFICATION'
-      })
-    };
-  }
-
   try {
     const body = JSON.parse(event.body || '{}');
     const { imageBase64 } = body;
 
     if (!imageBase64) {
-      console.warn('[VALIDATION ERROR] No se recibió imageBase64 en el cuerpo de la petición.');
       return {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'No se envió ninguna imagen.', step: 'INPUT_VALIDATION' })
+        body: JSON.stringify({ error: 'No se envió ninguna imagen.' })
       };
     }
 
     const sessionId = uuidv4();
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-    console.log(`[INFO] Sesión ${sessionId} creada. Tamaño Base64: ${Math.round(cleanBase64.length / 1024)} KB`);
 
-    // --- PASO 1: Subir original a Cloudinary ---
-    console.log('[STEP 1] Subiendo imagen original a Cloudinary...');
+    // --- PASO 1: Subir imagen original a Cloudinary ---
+    console.log('[STEP 1] Subiendo original a Cloudinary...');
     const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
       public_id: `${sessionId}_original`
     });
-    console.log(`[STEP 1 OK] Original almacenado con public_id: ${originalUpload.public_id} (+${Date.now() - t0}ms)`);
+    console.log(`[STEP 1 OK] Original guardado: ${originalUpload.public_id}`);
 
-// --- PASO 2: Análisis con Gemini ---
-    console.log('[STEP 2] Enviando imagen a Gemini para diseño del look...');
+    // --- PASO 2: Gemini analiza y redacta el prompt de moda ---
+    console.log('[STEP 2] Consultando Gemini para el estilismo...');
     let styleVibe = "Look Haute Couture Personalizado";
     let stylistAdvice = "Corte estructurado y balance de color ideal para realzar tu complexión.";
     let imagePrompt = "Full-body high-fashion editorial photography of an elegant woman wearing a bespoke luxury designer outfit matching natural skin tone, studio lighting, highly detailed 8k";
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-1.5-flash',
         contents: [
           {
             role: 'user',
             parts: [
               { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
               {
-                text: `Actúa como una estilista de moda femenina de lujo. Analiza a la persona en esta foto.
+                text: `Actúa como una estilista de moda femenina de alta gama. Analiza a la persona en esta foto.
 Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
 {
   "styleVibe": "Título corto y elegante del outfit recomendado",
@@ -101,60 +76,65 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
         config: { responseMimeType: 'application/json' }
       });
 
-      console.log(`[STEP 2 OK] Respuesta de Gemini recibida (+${Date.now() - t0}ms)`);
       const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
       if (parsed.imageGenerationPrompt) imagePrompt = parsed.imageGenerationPrompt;
-      console.log(`[STEP 2 DATA] Prompt generado: "${imagePrompt}"`);
+      console.log(`[STEP 2 OK] Prompt generado: "${imagePrompt}"`);
     } catch (analysisErr) {
-      console.error('[STEP 2 FAIL] Error durante el análisis de Gemini:', analysisErr);
+      console.error('[STEP 2 FAIL] Error en Gemini:', analysisErr);
       throw new Error(`Fallo en análisis de Gemini: ${analysisErr.message}`);
     }
 
-    // --- PASO 3: Generación de imagen con Imagen 3 (SIN FALLBACKS OCULTOS) ---
-    console.log('[STEP 3] Ejecutando ai.models.generateImages con imagen-3.0-generate-002...');
-    let outfitBase64 = null;
+    // --- PASO 3: Generar imagen con Imagen 3 vía REST API de AI Studio ---
+    console.log('[STEP 3] Llamando a Imagen 3 de Google AI Studio vía REST API...');
+    const imagenEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`;
 
-    try {
-      const imageResult = await ai.models.generateImages({
-        model: 'imagen-3.0-generate-002',
-        prompt: imagePrompt,
-        config: {
-          numberOfImages: 1,
-          aspectRatio: '3:4',
-          outputMimeType: 'image/jpeg'
-        }
-      });
-
-      console.log('[STEP 3 RAW RESPONSE]', JSON.stringify({
-        hasGeneratedImages: !!imageResult?.generatedImages,
-        count: imageResult?.generatedImages?.length || 0
-      }));
-
-      if (imageResult?.generatedImages?.[0]?.image?.imageBytes) {
-        outfitBase64 = imageResult.generatedImages[0].image.imageBytes;
-        console.log(`[STEP 3 OK] Imagen recibida de Imagen 3 (+${Date.now() - t0}ms)`);
-      } else {
-        throw new Error('La API de Imagen 3 no devolvió bytes de imagen en el payload.');
+    const imagenPayload = {
+      instances: [
+        { prompt: imagePrompt }
+      ],
+      parameters: {
+        sampleCount: 1,
+        aspectRatio: '3:4',
+        outputMimeType: 'image/jpeg'
       }
-    } catch (imgError) {
-      console.error('[STEP 3 CRITICAL FAIL] Error de generación en Imagen 3:', imgError);
-      // Extraer datos útiles del error de Google
-      const status = imgError.status || imgError.statusCode || 'N/A';
-      const details = imgError.errorDetails || imgError.message || 'Error desconocido';
-      throw new Error(`Fallo en Imagen 3 (Status ${status}): ${details}`);
+    };
+
+    const imagenRes = await fetch(imagenEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(imagenPayload)
+    });
+
+    const imagenData = await imagenRes.json();
+
+    if (!imagenRes.ok) {
+      console.error('[STEP 3 ERROR REST]', JSON.stringify(imagenData));
+      const msg = imagenData.error?.message || `HTTP Status ${imagenRes.status}`;
+      throw new Error(`Error en Imagen 3 REST API: ${msg}`);
     }
 
-    // --- PASO 4: Subir el outfit generado por Gemini a Cloudinary ---
-    console.log('[STEP 4] Subiendo imagen generada por IA a Cloudinary...');
+    let outfitBase64 = null;
+    if (imagenData.predictions?.[0]?.bytesBase64Encoded) {
+      outfitBase64 = imagenData.predictions[0].bytesBase64Encoded;
+    } else if (imagenData.predictions?.[0]?.imageBytes) {
+      outfitBase64 = imagenData.predictions[0].imageBytes;
+    } else {
+      throw new Error('Imagen 3 respondió correctamente pero no incluyó bytes de imagen.');
+    }
+
+    console.log(`[STEP 3 OK] Imagen generada recibida con éxito (+${Date.now() - t0}ms)`);
+
+    // --- PASO 4: Subir look generado a Cloudinary ---
+    console.log('[STEP 4] Subiendo look generado a Cloudinary...');
     const genUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${outfitBase64}`, {
       folder: 'aura_outfits/creations',
       public_id: `${sessionId}_generated`
     });
-    console.log(`[STEP 4 OK] Look generado guardado con public_id: ${genUpload.public_id} (+${Date.now() - t0}ms)`);
+    console.log(`[STEP 4 OK] Guardado con public_id: ${genUpload.public_id}`);
 
-    // --- PASO 5: Crear URL con desenfoque destructivo de servidor ---
+    // --- PASO 5: URL con desenfoque destructivo de Cloudinary ---
     const blurredImageUrl = cloudinary.url(genUpload.public_id, {
       transformation: [
         { width: 600, height: 800, crop: 'fill' },
@@ -163,7 +143,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
       secure: true
     });
 
-    // --- PASO 6: Persistir datos de la sesión ---
+    // --- PASO 6: Guardar sesión para PayPal ---
     global.sessionsDb[sessionId] = {
       sessionId,
       publicId: genUpload.public_id,
@@ -186,14 +166,11 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
     };
 
   } catch (error) {
-    console.error(`[EXCEPTION] Fin con error (+${Date.now() - t0}ms):`, error);
+    console.error('[EXCEPTION]', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: error.message || 'Error desconocido al procesar la imagen.',
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      })
+      body: JSON.stringify({ error: error.message })
     };
   }
 };
