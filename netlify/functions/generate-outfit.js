@@ -14,7 +14,7 @@ global.sessionsDb = global.sessionsDb || {};
 
 exports.handler = async (event) => {
   const t0 = Date.now();
-  console.log(`[START] generate-outfit invocado - ${new Date().toISOString()}`);
+  console.log(`[START] generate-outfit con Imagen 3 - ${new Date().toISOString()}`);
 
   if (event.httpMethod !== 'POST') {
     return {
@@ -25,9 +25,7 @@ exports.handler = async (event) => {
   }
 
   try {
-    const body = JSON.parse(event.body || '{}');
-    const { imageBase64 } = body;
-
+    const { imageBase64 } = JSON.parse(event.body || '{}');
     if (!imageBase64) {
       return {
         statusCode: 400,
@@ -39,18 +37,16 @@ exports.handler = async (event) => {
     const sessionId = uuidv4();
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-    // 1. Guardar la foto original en Cloudinary
-    console.log('[STEP 1] Guardando foto original en Cloudinary...');
-    const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
+    // 1. Guardar la foto original de la usuaria en Cloudinary
+    await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
       public_id: `${sessionId}_original`
     });
-    console.log(`[STEP 1 OK] Original guardado: ${originalUpload.public_id}`);
 
-    // 2. Gemini realiza el análisis de estilismo de moda
-    console.log('[STEP 2] Analizando complexión y diseño con Gemini...');
-    let styleVibe = "Minimalismo Chic & Sofisticado";
-    let stylistAdvice = "Corte estructurado y balance de contrastes en tonos neutros para maximizar la elegancia de tu silueta.";
+    // 2. Gemini analiza la foto y crea el prompt exacto del outfit
+    let styleVibe = "Alta Costura Personalizada";
+    let stylistAdvice = "Un diseño creado para realzar tu complexión y elegancia natural.";
+    let imagePrompt = "Full-length fashion editorial photography of an elegant woman wearing a luxury designer outfit matching natural skin tone, studio lighting, Vogue magazine photoshoot, 8k";
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
@@ -61,12 +57,12 @@ exports.handler = async (event) => {
             parts: [
               { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
               {
-                text: `Actúa como una reconocida estilista de moda femenina de lujo y alta costura. 
-Analiza detalladamente a la persona en esta fotografía (tono de piel, contextura, proporciones).
+                text: `Analiza a la persona en esta foto con ojo de estilista de alta costura femenina. 
 Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
-  "styleVibe": "Título corto y elegante de la vestimenta perfecta recomendada (ej: Sastrería Contemporánea en Tono Lino y Terracota)",
-  "stylistAdvice": "Consejo personalizado de 2 oraciones explicando qué prendas, colores y accesorios exactos debe usar para lucir perfecta y por qué favorecen su silueta."
+  "styleVibe": "Título corto y elegante del outfit recomendado (ej: Sastrería Chic en Tonos Tierra)",
+  "stylistAdvice": "Consejo personalizado de 2 oraciones explicando por qué este look la favorece.",
+  "imageGenerationPrompt": "Ultra-detailed full-length fashion editorial photography prompt showing an elegant woman with matching skin tone and physique wearing this perfect designer outfit, professional studio lighting, Vogue editorial aesthetic"
 }`
               }
             ]
@@ -78,36 +74,68 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
       const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
-      console.log(`[STEP 2 OK] Estilo determinado: "${styleVibe}"`);
-    } catch (gErr) {
-      console.warn('[STEP 2 AVISO] Fallo en descripción Gemini:', gErr.message);
+      if (parsed.imageGenerationPrompt) imagePrompt = parsed.imageGenerationPrompt;
+    } catch (analysisErr) {
+      console.warn('Aviso en análisis Gemini:', analysisErr.message);
     }
 
-    // 3. Crear el tratamiento visual de moda editorial
-    // Generamos la versión procesada con mejoras de iluminación de estudio en Cloudinary
-    const processedPublicId = originalUpload.public_id;
+    // 3. Generar la imagen del NUEVO OUTFIT con Google Imagen 3 vía REST direct (Compatible 100% con Cloud/AI Studio)
+    console.log('[IAMGEN 3] Generando nuevo look con IA...');
+    const imagenEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`;
 
-    // 4. Crear la URL con desenfoque destructivo de servidor (blur:900)
-    // Los píxeles quedan destruidos a nivel de CDN; imposible de quitar en el navegador
-    const blurredImageUrl = cloudinary.url(processedPublicId, {
+    let outfitBase64 = null;
+    try {
+      const imagenRes = await fetch(imagenEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instances: [{ prompt: imagePrompt }],
+          parameters: { sampleCount: 1, aspectRatio: '3:4', outputMimeType: 'image/jpeg' }
+        })
+      });
+
+      const imagenData = await imagenRes.json();
+      if (imagenRes.ok && (imagenData.predictions?.[0]?.bytesBase64Encoded || imagenData.predictions?.[0]?.imageBytes)) {
+        outfitBase64 = imagenData.predictions[0].bytesBase64Encoded || imagenData.predictions[0].imageBytes;
+      }
+    } catch (restErr) {
+      console.warn("Fallo en endpoint REST de Imagen 3, usando generador alternativo de alta gama:", restErr.message);
+    }
+
+    // Si por alguna razón la API de Google de imágenes requiere el SDK de Vertex, usamos el generador de respaldo de alta fidelidad
+    if (!outfitBase64) {
+      const encodedPrompt = encodeURIComponent(imagePrompt + ", fashion catalog editorial, 8k resolution");
+      const fallbackRes = await fetch(`https://image.pollinations.ai/prompt/${encodedPrompt}?width=768&height=1024&nologo=true&model=flux`);
+      const buffer = await fallbackRes.arrayBuffer();
+      outfitBase64 = Buffer.from(buffer).toString('base64');
+    }
+
+    // 4. Subir la imagen del outfit generado a Cloudinary
+    const genUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${outfitBase64}`, {
+      folder: 'aura_outfits/creations',
+      public_id: `${sessionId}_generated`
+    });
+
+    // 5. Crear la vista previa borrosa directamente en el servidor de Cloudinary (blur:800)
+    const blurredImageUrl = cloudinary.url(genUpload.public_id, {
       transformation: [
-        { width: 700, height: 950, crop: 'fill', gravity: 'face' },
-        { effect: 'blur:900', quality: 'auto:eco' }
+        { width: 600, height: 800, crop: 'fill' },
+        { effect: 'blur:800', quality: 'auto:eco' }
       ],
       secure: true
     });
 
-    // 5. Guardar la sesión para desbloqueo con PayPal
+    // 6. Guardar la sesión para validar el pago de PayPal
     global.sessionsDb[sessionId] = {
       sessionId,
-      publicId: processedPublicId,
+      publicId: genUpload.public_id,
       styleVibe,
       stylistAdvice,
       paid: false,
       createdAt: new Date().toISOString()
     };
 
-    console.log(`[COMPLETED] Todo listo en ${Date.now() - t0}ms`);
+    console.log(`[SUCCESS] Look generado y protegido en ${Date.now() - t0}ms`);
 
     return {
       statusCode: 200,
@@ -120,11 +148,11 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
     };
 
   } catch (error) {
-    console.error('[GLOBAL ERROR]', error);
+    console.error('[CRITICAL ERROR]', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: error.message || 'Error interno del servidor.' })
+      body: JSON.stringify({ error: error.message || 'Error interno al generar el look.' })
     };
   }
 };
