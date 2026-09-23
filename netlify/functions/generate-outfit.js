@@ -26,15 +26,16 @@ exports.handler = async (event) => {
     const sessionId = uuidv4();
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-    // 1. Subir la foto original de la usuaria a Cloudinary
-    const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
+    // 1. Guardar la foto original en Cloudinary
+    await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
       public_id: `${sessionId}_original`
     });
 
-    // 2. Gemini genera la asesoría de estilismo experta de alta gama
-    let styleVibe = "Minimalismo Chic en Tonos Tierra";
-    let stylistAdvice = "Para realzar tu silueta, opta por piezas de sastrería fluida en tonos crudos y accesorios dorados minimalistas. Esta combinación aporta una luminosidad impecable a tu rostro y equilibra tus proporciones naturales.";
+    // 2. Gemini analiza la foto y crea el prompt de diseño de alta costura
+    let styleVibe = "Alta Costura Personalizada";
+    let stylistAdvice = "Un diseño impecable que equilibra las proporciones y realza tu tono natural.";
+    let imagePrompt = "Full-length fashion editorial photography of an elegant woman wearing a bespoke luxury designer outfit matching natural skin tone, Vogue magazine photoshoot, studio lighting, 8k";
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
@@ -45,11 +46,12 @@ exports.handler = async (event) => {
             parts: [
               { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
               {
-                text: `Actúa como una directora de estilismo de una revista de alta moda (Vogue). Analiza a la persona en esta foto con criterio profesional.
+                text: `Analiza a la persona en esta foto con ojo de estilista de alta moda femenina. 
 Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
-  "styleVibe": "Título sofisticado del concepto de moda ideal para ella",
-  "stylistAdvice": "Consejo de 3 oraciones altamente profesional, detallando los cortes, tipos de tela, colores específicos y accesorios que transforman su imagen por completo."
+  "styleVibe": "Título corto y elegante del outfit recomendado",
+  "stylistAdvice": "Consejo personalizado de 2 oraciones explicando por qué este look la favorece.",
+  "imageGenerationPrompt": "Ultra-detailed full-length fashion editorial photography prompt showing an elegant woman with matching skin tone and physique wearing this perfect designer outfit, professional studio lighting, Vogue editorial aesthetic"
 }`
               }
             ]
@@ -61,38 +63,58 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
       const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
-    } catch (gErr) {
-      console.warn("Aviso en Gemini:", gErr.message);
+      if (parsed.imageGenerationPrompt) imagePrompt = parsed.imageGenerationPrompt;
+    } catch (analysisErr) {
+      console.error('Error en Gemini:', analysisErr);
     }
 
-    // 3. Crear una versión de estudio fotográfico profesional de su foto real
-    // Cloudinary aplica corrección de color de revista y alta nitidez
-    const enhancedUrl = cloudinary.url(originalUpload.public_id, {
-      transformation: [
-        { width: 800, height: 1066, crop: 'fill', gravity: 'face' },
-        { effect: 'improve', quality: 'auto:best' },
-        { effect: 'contrast:15', vibrance: 20 }
-      ],
-      secure: true
+    // 3. Llamada directa por fetch al endpoint REST de Imagen 3 de Google AI Studio
+    // Este es el mecanismo exacto que evita los bloqueos del SDK de Node.js
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instances: [{ prompt: imagePrompt }],
+        parameters: {
+          sampleCount: 1,
+          aspectRatio: '3:4',
+          outputMimeType: 'image/jpeg'
+        }
+      })
     });
 
-    const enhancedUpload = await cloudinary.uploader.upload(enhancedUrl, {
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || `Error en la API de Google Imagen (HTTP ${response.status})`);
+    }
+
+    const outfitBase64 = data.predictions?.[0]?.bytesBase64Encoded || data.predictions?.[0]?.imageBytes;
+    if (!outfitBase64) {
+      throw new Error('La API de Google no devolvió datos de imagen válidos.');
+    }
+
+    // 4. Subir la imagen generada por IA a Cloudinary
+    const genUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${outfitBase64}`, {
       folder: 'aura_outfits/creations',
-      public_id: `${sessionId}_enhanced`
+      public_id: `${sessionId}_generated`
     });
 
-    // 4. Crear la vista previa con desenfoque destructivo de servidor (blur:900)
-    const blurredImageUrl = cloudinary.url(enhancedUpload.public_id, {
+    // 5. Aplicar desenfoque seguro de servidor (blur:800)
+    const blurredImageUrl = cloudinary.url(genUpload.public_id, {
       transformation: [
-        { effect: 'blur:900', quality: 'auto:eco' }
+        { width: 600, height: 800, crop: 'fill' },
+        { effect: 'blur:800', quality: 'auto:eco' }
       ],
       secure: true
     });
 
-    // 5. Guardar sesión para el flujo de pago con PayPal
+    // 6. Registrar sesión para PayPal
     global.sessionsDb[sessionId] = {
       sessionId,
-      publicId: enhancedUpload.public_id,
+      publicId: genUpload.public_id,
       styleVibe,
       stylistAdvice,
       paid: false,
@@ -110,11 +132,11 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
     };
 
   } catch (error) {
-    console.error(error);
+    console.error('Error crítico en generate-outfit:', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: error.message || 'Error al procesar la solicitud.' })
+      body: JSON.stringify({ error: error.message })
     };
   }
 };
