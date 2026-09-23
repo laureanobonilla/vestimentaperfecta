@@ -1,5 +1,6 @@
 // netlify/functions/generate-outfit.js
 const { GoogleGenAI } = require('@google/genai');
+const { fal } = require('@fal-ai/client');
 const cloudinary = require('cloudinary').v2;
 const { v4: uuidv4 } = require('uuid');
 
@@ -13,7 +14,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 global.sessionsDb = global.sessionsDb || {};
 
 exports.handler = async (event) => {
-  console.log('[START] generate-outfit con Virtual Try-On invocado');
+  console.log('[START] generate-outfit con Fal.ai IDM-VTON iniciado');
 
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
@@ -28,7 +29,7 @@ exports.handler = async (event) => {
     const sessionId = uuidv4();
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-    // 1. Subir la foto original a Cloudinary para tener una URL pública accesible por la API de Try-On
+    // 1. Subir la foto original a Cloudinary para obtener una URL pública accesible
     console.log('[1/4] Subiendo foto original a Cloudinary...');
     const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
@@ -36,11 +37,11 @@ exports.handler = async (event) => {
     });
     const userImageUrl = originalUpload.secure_url;
 
-    // 2. Gemini analiza los detalles de moda y redacta el prompt del outfit
+    // 2. Gemini analiza los detalles de moda y redacta la descripción del outfit
     console.log('[2/4] Gemini analizando complexión y diseñando el look...');
     let styleVibe = "Alta Costura Personalizada";
     let stylistAdvice = "Un diseño exclusivo que equilibra tu silueta y aporta una elegancia impecable.";
-    let outfitDescription = "A luxurious bespoke designer evening gown, high-end editorial fashion, studio lighting, 8k";
+    let garmentDescription = "A luxurious bespoke designer evening dress, high-end editorial fashion";
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
@@ -56,7 +57,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
   "styleVibe": "Título corto y elegante del outfit recomendado",
   "stylistAdvice": "Consejo de 2 oraciones explicando por qué este look la favorece.",
-  "outfitDescription": "Detailed English description of a stunning luxury designer outfit (dress or tailored suit) for virtual try-on, photorealistic, 8k"
+  "garmentDescription": "Detailed English description of a stunning luxury designer outfit for virtual try-on"
 }`
               }
             ]
@@ -68,39 +69,41 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
       const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
-      if (parsed.outfitDescription) outfitDescription = parsed.outfitDescription;
+      if (parsed.garmentDescription) garmentDescription = parsed.garmentDescription;
     } catch (gErr) {
       console.warn("Aviso en análisis Gemini:", gErr.message);
     }
 
-    // 3. Llamada a la API de Virtual Try-On (Ejemplo usando Fal.ai o motor especializado)
-    console.log('[3/4] Procesando Virtual Try-On (fusionando identidad con el nuevo outfit)...');
+    // 3. Llamada oficial al modelo de Virtual Try-On en Fal.ai (IDM-VTON)
+    console.log('[3/4] Ejecutando Virtual Try-On en fal.ai/fal-ai/idm-vton...');
     
-    // Aquí conectamos con la API de Virtual Try-On usando la URL pública de la foto de la usuaria
-    const tryOnResponse = await fetch('https://fal.run/fal-ai/idm-vton', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Key ${process.env.FAL_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    // Configuramos la credencial con la variable de entorno FAL_KEY
+    fal.config({ credentials: process.env.FAL_KEY });
+
+    const result = await fal.subscribe("fal-ai/idm-vton", {
+      input: {
         human_image_url: userImageUrl,
-        garment_description: outfitDescription,
-        garm_img_url: "https://images.unsplash.com/photo-1515372039744-b8f02a3ae446" // Referencia o prenda generada
-      })
+        // Usamos una prenda base de alta costura o generada por la descripción de Gemini
+        garment_image_url: "https://images.unsplash.com/photo-1515372039744-b8f02a3ae446",
+        description: garmentDescription,
+        category: "auto"
+      },
+      logs: true,
+      onQueueUpdate: (update) => {
+        if (update.status === "IN_PROGRESS") {
+          console.log(`[FAL QUEUE] Progreso del Try-On...`);
+        }
+      },
     });
 
-    const tryOnData = await tryOnResponse.json();
-    
-    let generatedImageUrl = null;
-    if (tryOnResponse.ok && tryOnData.image?.url) {
-      generatedImageUrl = tryOnData.image.url;
-    } else {
-      console.warn("Aviso: Try-On externo tardó o falló, usando optimizador de estudio de respaldo.");
-      generatedImageUrl = userImageUrl; // Respaldo seguro
+    if (!result?.data?.image?.url) {
+      throw new Error("La API de Fal.ai no devolvió ninguna imagen generada.");
     }
 
-    // 4. Descargar la imagen resultante del Try-On y subirla a tus creaciones en Cloudinary
+    const generatedImageUrl = result.data.image.url;
+    console.log('[3/4 SUCCESS] Imagen generada por Fal.ai:', generatedImageUrl);
+
+    // 4. Descargar la imagen resultante y subirla a tus creaciones protegidas en Cloudinary
     const imgFetch = await fetch(generatedImageUrl);
     const imgBuffer = await imgFetch.arrayBuffer();
     
@@ -118,7 +121,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
       secure: true
     });
 
-    // 6. Registrar sesión para PayPal
+    // 6. Registrar sesión para el pago de PayPal
     global.sessionsDb[sessionId] = {
       sessionId,
       publicId: genUpload.public_id,
@@ -128,7 +131,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
       createdAt: new Date().toISOString()
     };
 
-    console.log('[SUCCESS] Look de Virtual Try-On generado con éxito.');
+    console.log('[SUCCESS] Proceso completado con éxito.');
 
     return {
       statusCode: 200,
@@ -141,7 +144,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
     };
 
   } catch (error) {
-    console.error('[FATAL ERROR]', error);
+    console.error('[FATAL ERROR IN TRY-ON]:', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
