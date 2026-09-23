@@ -47,8 +47,7 @@ exports.handler = async (event) => {
     });
     console.log(`[STEP 1 OK] Original guardado: ${originalUpload.public_id}`);
 
-    // --- PASO 2: Gemini analiza y redacta el prompt de moda ---
-    // --- PASO 2: Gemini analiza y redacta el prompt de moda ---
+// --- PASO 2: Gemini analiza y redacta el prompt de moda ---
     console.log('[STEP 2] Consultando Gemini para el estilismo...');
     let styleVibe = "Look Haute Couture Personalizado";
     let stylistAdvice = "Corte estructurado y balance de color ideal para realzar tu complexión.";
@@ -56,7 +55,7 @@ exports.handler = async (event) => {
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3.6-flash',
         contents: [
           {
             role: 'user',
@@ -77,11 +76,12 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
         config: { responseMimeType: 'application/json' }
       });
 
+      console.log(`[STEP 2 OK] Respuesta de Gemini recibida (+${Date.now() - t0}ms)`);
       const parsed = JSON.parse(geminiAnalysis.text);
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
       if (parsed.imageGenerationPrompt) imagePrompt = parsed.imageGenerationPrompt;
-      console.log(`[STEP 2 OK] Prompt generado: "${imagePrompt}"`);
+      console.log(`[STEP 2 DATA] Prompt generado: "${imagePrompt}"`);
     } catch (analysisErr) {
       console.error('[STEP 2 FAIL] Error en Gemini:', analysisErr);
       throw new Error(`Fallo en análisis de Gemini: ${analysisErr.message}`);
