@@ -88,7 +88,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
 
     // 3. Generar la imagen con Imagen 3 usando la API REST directa de Google AI Studio
     console.log('[STEP 3] Llamando a Imagen 3 REST API con API Key...');
-    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${process.env.GEMINI_API_KEY}`;
+    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${process.env.GEMINI_API_KEY}`;
     
     const imagenResponse = await fetch(imagenUrl, {
       method: 'POST',
