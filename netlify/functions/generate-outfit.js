@@ -9,7 +9,12 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Inicializar el SDK forzando la versión compatible con API Keys de AI Studio
+const ai = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY,
+  apiVersion: 'v1alpha'
+});
+
 global.sessionsDb = global.sessionsDb || {};
 
 exports.handler = async (event) => {
@@ -40,18 +45,17 @@ exports.handler = async (event) => {
     const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
     // 1. Guardar foto original en Cloudinary
-    console.log('[STEP 1] Subiendo original a Cloudinary...');
+    console.log('[STEP 1] Guardando foto original...');
     const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
       folder: 'aura_outfits/originals',
       public_id: `${sessionId}_original`
     });
-    console.log(`[STEP 1 OK] Guardado con id: ${originalUpload.public_id}`);
 
-    // 2. Gemini 3.6 Flash analiza la foto y crea el prompt de diseño
-    console.log('[STEP 2] Consultando Gemini para el estilismo...');
-    let styleVibe = "Alta Costura Personalizada";
-    let stylistAdvice = "Un corte estilizado que resalta tu armonía natural.";
-    let imagePrompt = "Full-length fashion editorial photography of an elegant woman wearing a bespoke designer outfit matching skin tone, Vogue magazine photoshoot, studio lighting, 8k";
+    // 2. Gemini 3.6 Flash analiza la foto y diseña el concepto
+    console.log('[STEP 2] Analizando estilo con Gemini 3.6 Flash...');
+    let styleVibe = "Alta Costura Contemporánea";
+    let stylistAdvice = "Un corte estructurado y balance cromático ideal para tu presencia natural.";
+    let imagePrompt = "Full-length fashion editorial photography of an elegant woman wearing a bespoke designer outfit matching natural skin tone, studio lighting, Vogue aesthetic, 8k";
 
     try {
       const geminiAnalysis = await ai.models.generateContent({
@@ -80,56 +84,65 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
       if (parsed.styleVibe) styleVibe = parsed.styleVibe;
       if (parsed.stylistAdvice) stylistAdvice = parsed.stylistAdvice;
       if (parsed.imageGenerationPrompt) imagePrompt = parsed.imageGenerationPrompt;
-      console.log(`[STEP 2 OK] Prompt generado: "${imagePrompt}"`);
+      console.log(`[STEP 2 OK] Concepto: "${styleVibe}"`);
     } catch (analysisErr) {
-      console.error('[STEP 2 FAIL] Error en Gemini:', analysisErr);
+      console.error('[STEP 2 FAIL]', analysisErr);
       throw new Error(`Fallo en análisis de Gemini: ${analysisErr.message}`);
     }
 
-    // 3. Generar la imagen con Imagen 3 usando la API REST directa de Google AI Studio
-    console.log('[STEP 3] Llamando a Imagen 3 REST API con API Key...');
-    const imagenUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict?key=${process.env.GEMINI_API_KEY}`;
-    
-    const imagenResponse = await fetch(imagenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        instances: [{ prompt: imagePrompt }],
-        parameters: {
-          sampleCount: 1,
+    // 3. Generación de Imagen
+    // Intentamos generar con Imagen a través del SDK con fallback al endpoint REST v1alpha
+    console.log('[STEP 3] Generando imagen del outfit...');
+    let outfitBase64 = null;
+
+    try {
+      // Método A: SDK nativo con apiVersion v1alpha
+      const imageResult = await ai.models.generateImages({
+        model: 'imagen-3.0-generate-002',
+        prompt: imagePrompt,
+        config: {
+          numberOfImages: 1,
           aspectRatio: '3:4',
           outputMimeType: 'image/jpeg'
         }
-      })
-    });
+      });
 
-    const imagenData = await imagenResponse.json();
+      if (imageResult?.generatedImages?.[0]?.image?.imageBytes) {
+        outfitBase64 = imageResult.generatedImages[0].image.imageBytes;
+      }
+    } catch (sdkImgErr) {
+      console.warn('[STEP 3 SDK AVISO] Fallo con SDK nativo:', sdkImgErr.message);
 
-    if (!imagenResponse.ok) {
-      console.error('[STEP 3 FAIL] Respuesta de error de Imagen 3:', JSON.stringify(imagenData));
-      const errMsg = imagenData.error?.message || `HTTP ${imagenResponse.status}`;
-      throw new Error(`Error en Imagen 3: ${errMsg}`);
+      // Método B: Llamada REST directa contra el endpoint v1alpha (no v1beta)
+      const restEndpoint = `https://generativelanguage.googleapis.com/v1alpha/models/imagen-3.0-generate-002:generateImages?key=${process.env.GEMINI_API_KEY}`;
+      const restRes = await fetch(restEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: imagePrompt,
+          numberOfImages: 1,
+          aspectRatio: '3:4',
+          outputMimeType: 'image/jpeg'
+        })
+      });
+
+      const restData = await restRes.json();
+      if (restRes.ok && restData.generatedImages?.[0]?.image?.imageBytes) {
+        outfitBase64 = restData.generatedImages[0].image.imageBytes;
+      } else {
+        console.error('[STEP 3 REST ERROR]', JSON.stringify(restData));
+        throw new Error(restData.error?.message || sdkImgErr.message || 'No se pudo generar la imagen con Imagen 3.');
+      }
     }
 
-    let outfitBase64 = null;
-    if (imagenData.predictions?.[0]?.bytesBase64Encoded) {
-      outfitBase64 = imagenData.predictions[0].bytesBase64Encoded;
-    } else if (imagenData.predictions?.[0]?.imageBytes) {
-      outfitBase64 = imagenData.predictions[0].imageBytes;
-    } else {
-      throw new Error('Imagen 3 no devolvió datos binarios de imagen.');
-    }
-
-    console.log(`[STEP 3 OK] Imagen recibida con éxito (+${Date.now() - t0}ms)`);
-
-    // 4. Subir la imagen generada a Cloudinary
+    // 4. Subir imagen generada a Cloudinary
     console.log('[STEP 4] Subiendo imagen generada a Cloudinary...');
     const genUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${outfitBase64}`, {
       folder: 'aura_outfits/creations',
       public_id: `${sessionId}_generated`
     });
 
-    // 5. Generar la URL con desenfoque de servidor (blur:800)
+    // 5. Generar URL de vista previa con desenfoque de servidor (blur:800)
     const blurredImageUrl = cloudinary.url(genUpload.public_id, {
       transformation: [
         { width: 600, height: 800, crop: 'fill' },
@@ -148,7 +161,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
       createdAt: new Date().toISOString()
     };
 
-    console.log(`[COMPLETED] Todo listo en ${Date.now() - t0}ms`);
+    console.log(`[SUCCESS] Sesión completada en ${Date.now() - t0}ms`);
 
     return {
       statusCode: 200,
@@ -161,7 +174,7 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura:
     };
 
   } catch (error) {
-    console.error('[ERROR]', error);
+    console.error('[CRITICAL ERROR]', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
