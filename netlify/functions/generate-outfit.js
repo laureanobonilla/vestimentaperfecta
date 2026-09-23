@@ -1,17 +1,6 @@
 // netlify/functions/generate-outfit.js
-const cloudinary = require('cloudinary').v2;
-const { v4: uuidv4 } = require('uuid');
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-global.sessionsDb = global.sessionsDb || {};
-
 exports.handler = async (event) => {
-  console.log('[TEMPORAL MODE] Solicitud recibida en modo de validación de imagen');
+  console.log('[TEMPORAL MODE] Validación estricta de calidad de imagen');
 
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method Not Allowed' }) };
@@ -23,49 +12,15 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'No se envió ninguna imagen.' }) };
     }
 
-    const sessionId = uuidv4();
-    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    // Simulamos un breve retraso para dar sensación de análisis profesional
+    await new Promise(resolve => setTimeout(resolve, 1200));
 
-    // 1. Guardar la foto original en Cloudinary temporalmente
-    const originalUpload = await cloudinary.uploader.upload(`data:image/jpeg;base64,${cleanBase64}`, {
-      folder: 'aura_outfits/originals',
-      public_id: `${sessionId}_original`
-    });
-
-    // 2. Crear una vista previa borrosa basada en la misma foto para mantener el flujo visual de la app
-    const blurredImageUrl = cloudinary.url(originalUpload.public_id, {
-      transformation: [
-        { width: 600, height: 800, crop: 'fill' },
-        { effect: 'blur:900', quality: 'auto:eco' }
-      ],
-      secure: true
-    });
-
-    // 3. Registrar sesión con un aviso de que la imagen necesita mayor claridad
-    const styleVibe = "Imagen no concluyente";
-    const stylistAdvice = "Por favor, sube una foto con mejor iluminación frontal y fondo limpio para que la inteligencia artificial pueda calibrar los detalles de tu outfit con precisión.";
-
-    global.sessionsDb[sessionId] = {
-      sessionId,
-      publicId: originalUpload.public_id,
-      styleVibe,
-      stylistAdvice,
-      paid: false,
-      createdAt: new Date().toISOString()
-    };
-
-    // Simulamos un breve retraso de procesamiento para dar realismo a la interfaz
-    await new Promise(resolve => setTimeout(resolve, 1500));
-
+    // Devolvemos un error 400 controlado para forzar al frontend a regresar al inicio
     return {
-      statusCode: 200,
+      statusCode: 400,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId,
-        blurredImageUrl,
-        styleSnippet: styleVibe,
-        needsBetterImage: true,
-        message: "Para garantizar un resultado de alta costura impecable, por favor envía una imagen más clara y con mejor iluminación."
+      body: JSON.stringify({ 
+        error: "Para garantizar un resultado de alta costura impecable, por favor envía una imagen más clara con mejor iluminación frontal y fondo limpio." 
       })
     };
 
@@ -74,7 +29,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: error.message || 'Error en el servidor.' })
+      body: JSON.stringify({ error: 'Error en el servidor.' })
     };
   }
 };
